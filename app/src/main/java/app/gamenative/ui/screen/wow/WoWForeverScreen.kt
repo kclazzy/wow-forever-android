@@ -909,7 +909,7 @@ enum class GameRegion(val label: String) {
 
 /** The 16:9 render budget, before it's reshaped to the window's aspect ratio. Defaults to the GPU profile's size. */
 enum class RenderResolution(val size: String, val label: String) {
-    HD("1280x720", "720p"), FULL_HD("1920x1080", "1080p");
+    SD("960x540", "540p"), HD("1280x720", "720p"), FULL_HD("1920x1080", "1080p");
 
     companion object {
         private const val KEY_RESOLUTION = "resolution"
@@ -1113,16 +1113,43 @@ private fun Throwable.isPermissionDenied() =
 
 private const val DEFAULT_DRIVER = "Turnip-WoW-scheduler-test"
 private const val ADRENO_8XX_DRIVER = "Turnip-V32-RP6sched"
+/**
+ * Optional Turnip build for low-end Adreno 6xx (e.g. A610 in Snapdragon 685). Not bundled: drop
+ * `turnip-a6xx-lowend.zip` into app/src/main/assets/bundled_components/ to use it. When the asset is
+ * missing the launcher falls back to [DEFAULT_DRIVER], which may not start on an A610.
+ */
+private const val ADRENO_6XX_DRIVER = "Turnip-A6xx-LowEnd"
+private const val ADRENO_6XX_ASSET = "turnip-a6xx-lowend.zip"
 private const val PROTON_VERSION = "proton-11.0-90624-arm64ec"
 private const val DXVK_VERSION = "2.4.1-wow-aarch64-test"
 
-private data class GpuProfile(val driver: String, val tuDebug: String, val screenSize: String, val label: String, val edition: String) {
+private data class GpuProfile(
+    val driver: String,
+    val tuDebug: String,
+    val screenSize: String,
+    val label: String,
+    val edition: String,
+    val lowEnd: Boolean = false,
+) {
     companion object {
-        fun detect(context: Context) = if (isAdreno8xxDevice(context)) {
-            GpuProfile(ADRENO_8XX_DRIVER, "noconform,sysmem", "1280x720", "Adreno 8xx", "Snapdragon 8 Elite / Adreno 8xx")
-        } else {
-            GpuProfile(DEFAULT_DRIVER, "noconform", "1920x1080", "Adreno 740", "Snapdragon 8 Series / Adreno 740")
+        fun detect(context: Context) = when {
+            isAdreno8xxDevice(context) ->
+                GpuProfile(ADRENO_8XX_DRIVER, "noconform,sysmem", "1280x720", "Adreno 8xx", "Snapdragon 8 Elite / Adreno 8xx")
+            isLowEndAdreno6xx(context) ->
+                GpuProfile(lowEndDriver(context), "noconform,sysmem", "960x540", "Adreno 6xx (low-end)", "Snapdragon 6 Series / Adreno 6xx", lowEnd = true)
+            else ->
+                GpuProfile(DEFAULT_DRIVER, "noconform", "1920x1080", "Adreno 740", "Snapdragon 8 Series / Adreno 740")
         }
+
+        private fun lowEndDriver(context: Context): String =
+            if (File(context.filesDir, "contents/adrenotools/$ADRENO_6XX_DRIVER/meta.json").exists() || hasBundledLowEndDriver(context)) {
+                ADRENO_6XX_DRIVER
+            } else {
+                DEFAULT_DRIVER
+            }
+
+        private fun hasBundledLowEndDriver(context: Context): Boolean =
+            runCatching { context.assets.open("bundled_components/$ADRENO_6XX_ASSET").close(); true }.getOrDefault(false)
 
         private fun isAdreno8xxDevice(context: Context): Boolean {
             if (GPUInformation.isAdreno8Elite(context)) return true
@@ -1132,7 +1159,36 @@ private data class GpuProfile(val driver: String, val tuDebug: String, val scree
             }
             return Build.HARDWARE.contains("sun", ignoreCase = true)
         }
+
+        /** Low-end Adreno 6xx (Snapdragon 4xx/6xx/7xx-mid). Renderer string first, SoC model (SM6225 = SD 685) as fallback. */
+        private fun isLowEndAdreno6xx(context: Context): Boolean {
+            val renderer = runCatching { GPUInformation.getRenderer(context) }.getOrDefault("").lowercase()
+            // Adreno 600-629 only (610/612/613/615/616/618/619/620); 630+ (845/855/865/888) are far stronger.
+            if (renderer.contains("adreno") && Regex("\\b6[0-2][0-9]\\b").containsMatchIn(renderer)) return true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                return listOf("SM6225", "SM6115", "SM6375", "SM6350").any { Build.SOC_MODEL.contains(it, ignoreCase = true) }
+            }
+            return false
+        }
     }
+}
+
+/**
+ * Picks the performance cores on big.LITTLE chips by comparing max frequencies, so the game and Wine don't
+ * get scheduled onto slow Cortex-A53 cores. Returns null when sysfs can't be read (the container then uses
+ * its own fallback). On a Snapdragon 685 this yields the four A73 cores.
+ */
+internal fun performanceCoreList(): String? {
+    val count = Runtime.getRuntime().availableProcessors()
+    val freqs = (0 until count).map { cpu ->
+        runCatching { File("/sys/devices/system/cpu/cpu$cpu/cpufreq/cpuinfo_max_freq").readText().trim().toLong() }.getOrDefault(0L)
+    }
+    val top = freqs.maxOrNull() ?: return null
+    if (top <= 0L) return null
+    // Cores within ~15% of the fastest tier count as performance cores.
+    val fast = freqs.indices.filter { freqs[it] >= top * 0.85 }
+    if (fast.isEmpty() || fast.size == count) return null
+    return fast.joinToString(",")
 }
 
 /**
@@ -1163,7 +1219,7 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 
     check(File(gameRoot, BUILD_INFO).exists()) { "Missing $BUILD_INFO in $gameRoot. Copy it from your WoW install." }
     try {
-        ensureGameConfig(gameRoot, screenSize, GameRegion.saved(context))
+        ensureGameConfig(gameRoot, screenSize, GameRegion.saved(context), gpu.lowEnd)
     } catch (e: Exception) {
         if (e.isPermissionDenied()) throw StorageAccessDeniedException(e)
         throw e
@@ -1224,6 +1280,12 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String)
         put("suspendPolicy", Container.SUSPEND_POLICY_NEVER)
         put("startupSelection", Container.STARTUP_SELECTION_AGGRESSIVE.toInt())
         put("wow64Mode", true)
+        if (gpu.lowEnd) {
+            performanceCoreList()?.let { cores ->
+                put("cpuList", cores)
+                put("cpuListWoW64", cores)
+            }
+        }
         put("wincomponents", "direct3d=0,directsound=0,directinput8=0,directinput=0,directmusic=0,directshow=0,directplay=0,vcrun2010=0,wmdecoder=0,opengl=0")
     }
 }
@@ -1260,7 +1322,7 @@ private val CONFIG_DEFAULTS = linkedMapOf(
     "accessibilityScreenNarrationEnabled" to "\"0\"",
 )
 
-internal fun ensureGameConfig(root: File, screenSize: String, region: GameRegion?) {
+internal fun ensureGameConfig(root: File, screenSize: String, region: GameRegion?, lowEnd: Boolean = false) {
     val flavorDir = File(root, FLAVOR_DIR)
     flavorDir.mkdirs()
     val flavorInfo = File(flavorDir, ".flavor.info")
@@ -1284,7 +1346,8 @@ internal fun ensureGameConfig(root: File, screenSize: String, region: GameRegion
     }
     if (!configWtf.exists()) {
         configWtf.parentFile?.mkdirs()
-        configWtf.writeText(CONFIG_DEFAULTS.entries.joinToString("\n") { "SET ${it.key} ${it.value}" } + "\n")
+        val defaults = if (lowEnd) CONFIG_DEFAULTS + LOW_END_CONFIG_OVERRIDES else CONFIG_DEFAULTS
+        configWtf.writeText(defaults.entries.joinToString("\n") { "SET ${it.key} ${it.value}" } + "\n")
     }
 
     val forced = mapOf("gxApi" to CONFIG_DEFAULTS.getValue("gxApi"), "portal" to "\"${region?.name ?: portalOf(root)}\"") +
@@ -1296,6 +1359,24 @@ internal fun ensureGameConfig(root: File, screenSize: String, region: GameRegion
         configWtf.writeText((kept + forcedLines).joinToString("\n") + "\n")
     }
 }
+
+/**
+ * Applied on top of [CONFIG_DEFAULTS] only when Config.wtf is first created on a low-end GPU (Adreno 6xx).
+ * Cuts draw distance, texture size, particles and weather, and caps the frame rate to limit heat. The player
+ * can still change them in game. These values are a starting point and have not been measured on hardware.
+ */
+private val LOW_END_CONFIG_OVERRIDES = linkedMapOf(
+    "farclip" to "\"600\"",
+    "horizonClip" to "\"600\"",
+    "RAIDfarclip" to "\"600\"",
+    "RAIDhorizonClip" to "\"600\"",
+    "graphicsTextureResolution" to "\"1\"",
+    "raidGraphicsTextureResolution" to "\"1\"",
+    "particleDensity" to "\"10\"",
+    "weatherDensity" to "\"0\"",
+    "maxFPS" to "\"30\"",
+    "maxFPSBk" to "\"15\"",
+)
 
 private val RESOLUTION_KEYS = listOf("gxFullscreenResolution", "gxWindowedResolution")
 
@@ -1310,6 +1391,9 @@ private fun portalOf(root: File) =
 private fun installBundledComponents(context: Context, onStatus: (String) -> Unit) {
     installDriver(context, DEFAULT_DRIVER, "turnip-wow-scheduler-test.zip", onStatus)
     installDriver(context, ADRENO_8XX_DRIVER, "turnip-V32-RP6sched.zip", onStatus)
+    if (runCatching { context.assets.open("bundled_components/$ADRENO_6XX_ASSET").close(); true }.getOrDefault(false)) {
+        installDriver(context, ADRENO_6XX_DRIVER, ADRENO_6XX_ASSET, onStatus)
+    }
 
     val protonDir = File(ImageFs.getSharedProtonDir(context), PROTON_VERSION)
     if (!File(protonDir, "profile.json").exists() || !File(protonDir, "bin/wine").exists()) {
