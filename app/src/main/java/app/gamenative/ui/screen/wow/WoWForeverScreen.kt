@@ -57,6 +57,7 @@ import app.gamenative.ui.theme.WowGold
 import app.gamenative.ui.theme.WowMuted
 import app.gamenative.ui.theme.WowSubtle
 import app.gamenative.utils.AppUpdater
+import app.gamenative.utils.LogMirror
 import app.gamenative.utils.StorageUtils
 import app.gamenative.utils.renderReleaseNotes
 import com.winlator.container.Container
@@ -244,6 +245,9 @@ fun WoWForeverScreen(
         // Storage access may have just been granted, which can reveal an install that was invisible before.
         if (!isUpdating && !isLaunching) gamePath = GamePath.load(context)
         checkFiles()
+        // Surface wine_debug.log and crash reports in a folder a file manager can open (after a crash the user
+        // lands back here).
+        scope.launch(Dispatchers.IO) { runCatching { mirrorAppLogs(context, gamePath) } }
         isLaunching = false
         statusText = READY_STATUS
         BattleNetSignIn.removeLoginFile(File(gamePath))
@@ -1366,6 +1370,13 @@ private val LOW_END_CONFIG_OVERRIDES = linkedMapOf(
 private val RESOLUTION_KEYS = listOf("gxFullscreenResolution", "gxWindowedResolution")
 
 private const val CONFIG_WTF = "$FLAVOR_DIR/WTF/Config.wtf"
+
+/** Copies the app's private logs to "<game folder>/app_logs" once storage access allows writing there. */
+private fun mirrorAppLogs(context: Context, gamePath: String) {
+    if (!StorageUtils.hasStoragePermission(context, gamePath)) return
+    val base = context.getExternalFilesDir(null) ?: return
+    LogMirror.mirror(listOf(File(base, "wine_logs"), File(base, "crash_logs")), File(gamePath, "app_logs"))
+}
 
 // The portal Config.wtf already points at, else the install's region from .build.info.
 internal fun portalOf(root: File) =

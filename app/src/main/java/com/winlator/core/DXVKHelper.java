@@ -2,6 +2,8 @@ package com.winlator.core;
 
 import android.content.Context;
 
+import app.gamenative.PrefManager;
+
 import com.winlator.core.envvars.EnvVars;
 import com.winlator.xenvironment.ImageFs;
 
@@ -18,7 +20,8 @@ public class DXVKHelper {
     public static void setEnvVars(Context context, KeyValueSet config, EnvVars envVars) {
         ImageFs imageFs = ImageFs.find(context);
         envVars.put("DXVK_STATE_CACHE_PATH", imageFs.getRootDir().getAbsolutePath() + ImageFs.CACHE_PATH);
-        envVars.put("DXVK_LOG_LEVEL", "none");
+        // DXVK writes <exe>_d3d11.log / _dxgi.log next to the game executable; keep it quiet unless diagnostics are on.
+        envVars.put("DXVK_LOG_LEVEL", PrefManager.INSTANCE.getEnableWineDebug() ? "info" : "none");
 
         File rootDir = ImageFs.find(context).getRootDir();
         File dxvkConfigFile = new File(imageFs.config_path+"/dxvk.conf");
