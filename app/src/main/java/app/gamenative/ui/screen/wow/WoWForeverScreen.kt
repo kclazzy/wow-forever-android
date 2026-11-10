@@ -1368,8 +1368,10 @@ private val RESOLUTION_KEYS = listOf("gxFullscreenResolution", "gxWindowedResolu
 private const val CONFIG_WTF = "$FLAVOR_DIR/WTF/Config.wtf"
 
 // The portal Config.wtf already points at, else the install's region from .build.info.
-private fun portalOf(root: File) =
-    File(root, CONFIG_WTF).takeIf { it.isFile }?.readLines()?.firstOrNull { it.startsWith("SET portal ", ignoreCase = true) }
+internal fun portalOf(root: File) =
+    // The read can fail with EACCES until "all files access" is granted; fall back instead of crashing the screen.
+    runCatching { File(root, CONFIG_WTF).takeIf { it.isFile }?.readLines() }.getOrNull()
+        ?.firstOrNull { it.startsWith("SET portal ", ignoreCase = true) }
         ?.substringAfter(" ")?.substringAfter(" ")?.trim('"')?.takeIf { it.isNotBlank() }
         ?: WowClientDownloader.readBuildInfo(File(root, BUILD_INFO))?.get("Branch")?.takeIf { it.isNotBlank() }?.uppercase() ?: "US"
 
