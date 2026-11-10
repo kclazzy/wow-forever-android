@@ -11,6 +11,10 @@ on:
         description: "Publish the driver zip as a GitHub Release"
         type: boolean
         default: true
+  # Manual dispatch is only offered for workflows on the default branch, so also run when this file changes.
+  push:
+    branches: [redmi-note-13-sd685]
+    paths: [".github/workflows/build-turnip.yml"]
 
 jobs:
   turnip:
@@ -152,7 +156,7 @@ jobs:
           path: turnip-a6xx-lowend.zip
 
       - name: Publish GitHub Release
-        if: ${{ github.event.inputs.publish == 'true' }}
+        if: ${{ github.event_name == 'push' || github.event.inputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
