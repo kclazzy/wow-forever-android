@@ -39,7 +39,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.compose.runtime.LaunchedEffect
 import app.gamenative.BuildConfig
+import app.gamenative.PrefManager
 import app.gamenative.PluviaApp
 import app.gamenative.events.AndroidEvent
 import app.gamenative.ui.screen.wow.WowClientDownloader.BUILD_INFO
@@ -93,6 +95,12 @@ fun WoWForeverScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val gpu = remember { GpuProfile.detect(context) }
+
+    // Diagnostics for the low-end profile: have Wine write wine_debug.log to
+    // Android/data/<package>/files/wine_logs/ so boot crashes can be analysed (this fork has no UI toggle for it).
+    LaunchedEffect(gpu.lowEnd) {
+        if (gpu.lowEnd) withContext(Dispatchers.IO) { PrefManager.enableWineDebug = true }
+    }
 
     var gamePath by remember { mutableStateOf(GamePath.load(context)) }
     var files by remember { mutableStateOf(GamePath.Status()) }
