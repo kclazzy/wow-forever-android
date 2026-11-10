@@ -42,13 +42,25 @@ jobs:
           chmod +x tools/fetch_components.sh gradlew
           tools/fetch_components.sh
 
-      - name: Optional Adreno 610 Turnip driver
-        if: ${{ github.event.inputs.driver_url != '' }}
+      # Bundle an Adreno 610 Turnip driver: driver_url if given, otherwise the newest turnip-a6xx-lowend-* release
+      # of this repository (built by the "Build Turnip" workflow).
+      - name: Bundle Adreno 610 Turnip driver
         env:
+          GH_TOKEN: ${{ github.token }}
           DRIVER_URL: ${{ github.event.inputs.driver_url }}
         run: |
-          curl -fL --retry 3 -o app/src/main/assets/bundled_components/turnip-a6xx-lowend.zip "$DRIVER_URL"
-          unzip -l app/src/main/assets/bundled_components/turnip-a6xx-lowend.zip | head -20
+          DEST=app/src/main/assets/bundled_components/turnip-a6xx-lowend.zip
+          if [ -z "$DRIVER_URL" ]; then
+            DRIVER_URL="$(gh api "repos/${{ github.repository }}/releases?per_page=30" \
+              --jq '[.[] | select(.tag_name | startswith("turnip-a6xx-lowend-"))][0].assets[] | select(.name == "turnip-a6xx-lowend.zip") | .browser_download_url' || true)"
+          fi
+          if [ -n "$DRIVER_URL" ]; then
+            echo "Bundling driver from $DRIVER_URL"
+            curl -fL --retry 3 -o "$DEST" "$DRIVER_URL"
+            unzip -l "$DEST"
+          else
+            echo "::warning::No Adreno 610 Turnip driver found; the APK will fall back to the Adreno 740 driver."
+          fi
 
       - name: Unit tests (WoW launcher)
         id: tests
