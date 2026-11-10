@@ -1,0 +1,164 @@
+name: Build Turnip (Adreno 6xx low-end)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mesa_ref:
+        description: "Mesa tag or branch to build (empty = latest stable release tag)"
+        required: false
+        default: ""
+      publish:
+        description: "Publish the driver zip as a GitHub Release"
+        type: boolean
+        default: true
+
+jobs:
+  turnip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write # needed to publish the GitHub Release
+    env:
+      NDK_VERSION: 27.3.13750724
+      API_LEVEL: "30"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bison flex glslang-tools pkg-config zip unzip git
+          pip install --quiet meson ninja mako pyyaml packaging ply
+
+      - name: Install Android NDK
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "ndk;$NDK_VERSION" > /dev/null
+          echo "NDK_BIN=$SDK/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_ENV"
+
+      - name: Fetch Mesa source
+        run: |
+          REF="${{ github.event.inputs.mesa_ref }}"
+          if [ -z "$REF" ]; then
+            REF="$(git ls-remote --tags --refs https://gitlab.freedesktop.org/mesa/mesa.git \
+              | sed 's#.*refs/tags/##' | grep -E '^mesa-[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          fi
+          echo "Building Mesa ref: $REF"
+          git clone --depth 1 --branch "$REF" https://gitlab.freedesktop.org/mesa/mesa.git mesa
+          echo "MESA_REF=$REF" >> "$GITHUB_ENV"
+          echo "MESA_VERSION=$(cat mesa/VERSION)" >> "$GITHUB_ENV"
+
+      # Turnip can only run on Adreno 610 if Mesa knows the chip; record that in the run summary.
+      - name: Check Adreno 610 support in this Mesa
+        run: |
+          {
+            echo "### Mesa $(cat mesa/VERSION) (\`$MESA_REF\`)"
+            echo '```'
+            grep -n -i -E "a610|0x06010000|0x06010[0-9a-f]{3}" mesa/src/freedreno/common/freedreno_devices.py || echo "NO A610 entry found in freedreno_devices.py"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Configure
+        working-directory: mesa
+        run: |
+          mkdir -p /tmp/empty-pc
+          cat > android-aarch64.txt <<EOF
+          [binaries]
+          ar = '$NDK_BIN/llvm-ar'
+          c = '$NDK_BIN/aarch64-linux-android${API_LEVEL}-clang'
+          cpp = ['$NDK_BIN/aarch64-linux-android${API_LEVEL}-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++']
+          c_ld = 'lld'
+          cpp_ld = 'lld'
+          strip = '$NDK_BIN/llvm-strip'
+          pkg-config = ['env', 'PKG_CONFIG_LIBDIR=/tmp/empty-pc', '/usr/bin/pkg-config']
+
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'armv8'
+          endian = 'little'
+          EOF
+
+          # Pass an option only if this Mesa version still has it (option names change between releases).
+          OPTFILE="$(ls meson.options meson_options.txt 2>/dev/null | head -1)"
+          ARGS=()
+          opt() { grep -q "option(['\"]$1['\"]" "$OPTFILE" && ARGS+=("-D$1=$2") || echo "skip unknown option $1"; }
+          opt platforms android
+          opt platform-sdk-version "$API_LEVEL"
+          opt android-stub true
+          opt android-libbacktrace disabled
+          opt gallium-drivers ""
+          opt vulkan-drivers freedreno
+          opt freedreno-kmds kgsl
+          opt egl disabled
+          opt gbm disabled
+          opt glx disabled
+          opt opengl false
+          opt gles1 disabled
+          opt gles2 disabled
+          opt llvm disabled
+          opt valgrind disabled
+          opt libunwind disabled
+          opt lmsensors disabled
+          opt zstd disabled
+          opt vulkan-beta true
+          echo "meson args: ${ARGS[*]}"
+
+          meson setup build --cross-file android-aarch64.txt \
+            -Dbuildtype=release -Db_lto=false -Dstrip=true "${ARGS[@]}"
+
+      - name: Build
+        working-directory: mesa
+        run: ninja -C build src/freedreno/vulkan/libvulkan_freedreno.so
+
+      - name: Inspect the library
+        working-directory: mesa/build/src/freedreno/vulkan
+        run: |
+          ls -l libvulkan_freedreno.so
+          echo "--- needed / soname"
+          "$NDK_BIN/llvm-readelf" -d libvulkan_freedreno.so | grep -E "NEEDED|SONAME"
+          echo "--- exported Vulkan ICD / HAL symbols"
+          "$NDK_BIN/llvm-nm" -D --defined-only libvulkan_freedreno.so | grep -E " (vk_icd|HMI)" || echo "NO vk_icd*/HMI exports"
+
+      - name: Package
+        run: |
+          mkdir -p pkg
+          cp mesa/build/src/freedreno/vulkan/libvulkan_freedreno.so pkg/
+          cat > pkg/meta.json <<EOF
+          {
+            "schemaVersion": 1,
+            "name": "Turnip-A6xx-LowEnd",
+            "description": "Upstream Mesa Turnip ($MESA_REF) built for low-end Adreno 6xx (e.g. Adreno 610). Unofficial, untested on hardware.",
+            "author": "Mesa; built by GitHub Actions",
+            "packageVersion": "1",
+            "vendor": "Mesa",
+            "driverVersion": "$MESA_VERSION",
+            "minApi": 28,
+            "libraryName": "libvulkan_freedreno.so"
+          }
+          EOF
+          (cd pkg && zip -9 ../turnip-a6xx-lowend.zip libvulkan_freedreno.so meta.json)
+          unzip -l turnip-a6xx-lowend.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: turnip-a6xx-lowend
+          path: turnip-a6xx-lowend.zip
+
+      - name: Publish GitHub Release
+        if: ${{ github.event.inputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="turnip-a6xx-lowend-${{ github.run_number }}"
+          gh release create "$TAG" turnip-a6xx-lowend.zip \
+            --target "${{ github.sha }}" --prerelease \
+            --title "Turnip for Adreno 6xx low-end (Mesa $MESA_VERSION) #${{ github.run_number }}" \
+            --notes "Unofficial build of upstream Mesa Turnip ($MESA_REF). Not tested on hardware; Adreno 610 support depends on this Mesa version. Use as driver_url in the Build APK workflow."
+          echo "Driver URL: https://github.com/${{ github.repository }}/releases/download/$TAG/turnip-a6xx-lowend.zip" | tee -a "$GITHUB_STEP_SUMMARY"
