@@ -25,8 +25,11 @@ jobs:
       # The runner image already ships the Android SDK (ANDROID_HOME); only licenses and the NDK are needed.
       - name: Prepare Android SDK
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36" "ndk;27.3.13750724" > /dev/null
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)"
+          echo "sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "ndk;27.3.13750724" > /dev/null
 
       - uses: gradle/actions/setup-gradle@v4
 
