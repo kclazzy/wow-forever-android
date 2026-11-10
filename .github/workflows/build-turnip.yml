@@ -64,7 +64,7 @@ jobs:
           {
             echo "### Mesa $(cat mesa/VERSION) (\`$MESA_REF\`)"
             echo '```'
-            grep -n -i -E "a610|0x06010000|0x06010[0-9a-f]{3}" mesa/src/freedreno/common/freedreno_devices.py || echo "NO A610 entry found in freedreno_devices.py"
+            grep -n -i -E "\b610\b|a610|0x0601[0-9a-f]{4}" mesa/src/freedreno/common/freedreno_devices.py || echo "NO A610 entry found in freedreno_devices.py"
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -92,7 +92,8 @@ jobs:
           # Pass an option only if this Mesa version still has it (option names change between releases).
           OPTFILE="$(ls meson.options meson_options.txt 2>/dev/null | head -1)"
           ARGS=()
-          opt() { grep -q "option(['\"]$1['\"]" "$OPTFILE" && ARGS+=("-D$1=$2") || echo "skip unknown option $1"; }
+          # -z: the option name is on the line after "option(", so match across newlines.
+          opt() { grep -Pzq "option\(\s*['\"]$1['\"]" "$OPTFILE" && ARGS+=("-D$1=$2") || echo "skip unknown option $1"; }
           opt platforms android
           opt platform-sdk-version "$API_LEVEL"
           opt android-stub true
