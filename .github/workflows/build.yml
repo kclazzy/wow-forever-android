@@ -30,6 +30,8 @@ jobs:
           echo "sdkmanager: $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" "platforms;android-36" "ndk;27.3.13750724" > /dev/null
+          # secrets-gradle-plugin fails configuration without this file.
+          echo "sdk.dir=$SDK" > local.properties
 
       - uses: gradle/actions/setup-gradle@v4
 
