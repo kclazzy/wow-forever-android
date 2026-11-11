@@ -4751,6 +4751,11 @@ private suspend fun extractGraphicsDriverFiles(
             }
         }
 
+        // Which Turnip build was picked; wine_debug.log hides it (the wrapper spoofs the device name).
+        runCatching {
+            val dir = File(context.getExternalFilesDir(null), "wine_logs").apply { mkdirs() }
+            File(dir, "graphics_driver.txt").writeText("adrenoToolsDriverId=$adrenoToolsDriverId\n")
+        }
         if (adrenoToolsDriverId !== "System") {
             val adrenotoolsManager: AdrenotoolsManager = AdrenotoolsManager(context)
             adrenotoolsManager.setDriverById(envVars, imageFs, adrenoToolsDriverId)

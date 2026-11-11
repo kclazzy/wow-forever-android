@@ -69,6 +69,7 @@ jobs:
           ./gradlew testModernDebugUnitTest --no-daemon
           --tests 'app.gamenative.ui.screen.wow.*'
           --tests 'app.gamenative.utils.LogMirrorTest'
+          --tests 'app.gamenative.utils.ExitReportTest'
 
       - name: Upload test report
         if: always()

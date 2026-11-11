@@ -57,6 +57,7 @@ import app.gamenative.ui.theme.WowGold
 import app.gamenative.ui.theme.WowMuted
 import app.gamenative.ui.theme.WowSubtle
 import app.gamenative.utils.AppUpdater
+import app.gamenative.utils.ExitReport
 import app.gamenative.utils.LogMirror
 import app.gamenative.utils.StorageUtils
 import app.gamenative.utils.renderReleaseNotes
@@ -1375,7 +1376,9 @@ private const val CONFIG_WTF = "$FLAVOR_DIR/WTF/Config.wtf"
 private fun mirrorAppLogs(context: Context, gamePath: String) {
     if (!StorageUtils.hasStoragePermission(context, gamePath)) return
     val base = context.getExternalFilesDir(null) ?: return
-    LogMirror.mirror(listOf(File(base, "wine_logs"), File(base, "crash_logs")), File(gamePath, "app_logs"))
+    val dest = File(gamePath, "app_logs")
+    LogMirror.mirror(listOf(File(base, "wine_logs"), File(base, "crash_logs")), dest)
+    runCatching { ExitReport.write(context, dest) }
 }
 
 // The portal Config.wtf already points at, else the install's region from .build.info.
