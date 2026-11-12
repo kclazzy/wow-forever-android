@@ -51,4 +51,6 @@ internal fun dxwrapperConfig(version: String, lowEnd: Boolean): String =
     if (lowEnd) "version=$version,numCompilerThreads=2,maxDeviceMemory=2048" else "version=$version"
 
 /** Wine debug channels for diagnosing the low-end profile. */
-internal const val LOW_END_WINE_DEBUG_CHANNELS = "warn,err,fixme,loaddll,seh,process"
+// No "seh": the game raises thousands of handled exceptions, and tracing them floods the log and slows startup.
+// "pid" and "timestamp" prefix each line, so it's clear which process exits, who ends it and when.
+internal const val LOW_END_WINE_DEBUG_CHANNELS = "warn,err,fixme,loaddll,process,pid,timestamp"

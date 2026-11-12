@@ -462,6 +462,13 @@ public abstract class ProcessHelper {
     }
 
 
+    /** Adds a line of our own to the Wine debug log (when debug logging is on). */
+    public static void emitDebugLine(String line) {
+        synchronized (debugCallbacks) {
+            for (Callback<String> callback : debugCallbacks) callback.call(line);
+        }
+    }
+
     /** Explains a status from Process.waitFor(): values above 128 mean the process was killed by signal (status - 128). */
     public static String describeExitStatus(int status) {
         if (status <= 128) return "status=" + status + (status == 0 ? " (clean exit)" : " (exited by itself with an error code)");
@@ -487,9 +494,7 @@ public abstract class ProcessHelper {
                     int status = process.waitFor();
                     String exitLine = "ProcessHelper: process exited, " + describeExitStatus(status);
                     Log.d("ProcessHelper", exitLine);
-                    synchronized (debugCallbacks) {
-                        for (Callback<String> callback : debugCallbacks) callback.call(exitLine);
-                    }
+                    emitDebugLine(exitLine);
                     terminationCallback.call(status);
                 }
                 catch (InterruptedException e) {

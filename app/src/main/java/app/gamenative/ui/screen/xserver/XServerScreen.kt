@@ -3909,6 +3909,8 @@ private fun exit(
     reason: String,
 ) {
     Timber.i("Exit called: $reason")
+    // Shows in wine_debug.log whether the app closed the game (and why) or the game went away on its own.
+    runCatching { com.winlator.core.ProcessHelper.emitDebugLine("App exit called: reason=$reason") }
 
     if (!isExiting.compareAndSet(false, true)) {
         Timber.i("Exit already in progress, ignoring duplicate request")
