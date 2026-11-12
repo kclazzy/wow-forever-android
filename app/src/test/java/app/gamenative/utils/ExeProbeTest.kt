@@ -25,6 +25,7 @@ class ExeProbeTest {
         buf.putInt(table + 12, 0x1000) // rva
         buf.putInt(table + 16, 0x200) // raw size
         buf.putInt(table + 20, 0x400) // raw offset
+        buf.putInt(table + 36, 0x60000020) // code, executable, readable
         buf.putInt(0x400 + 0x10, 0xD503201F.toInt()) // nop at rva 0x1010
         return buf.array()
     }
@@ -32,7 +33,7 @@ class ExeProbeTest {
     @Test
     fun parsesTheSectionTable() {
         val section = parsePeSections(fakePe()).single()
-        assertEquals(PeSection(".text", 0x1000, 0x200, 0x400, 0x200), section)
+        assertEquals(PeSection(".text", 0x1000, 0x200, 0x400, 0x200, executable = true), section)
     }
 
     @Test
@@ -57,6 +58,51 @@ class ExeProbeTest {
             val text = out.readText()
             assertTrue(text.contains("d503201f"))
             assertTrue(text.contains("rva 0x9000: not in file"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    private fun words(vararg w: Long): ByteArray {
+        val buf = ByteBuffer.allocate(w.size * 4).order(ByteOrder.LITTLE_ENDIAN)
+        w.forEach { buf.putInt(it.toInt()) }
+        return buf.array()
+    }
+
+    @Test
+    fun scanner_countsArmv81AtomicsSeparatelyFromArmv80Exclusives() {
+        val code = words(
+            0xC8A07C41, // cas x0, x1, [x2]            (ARMv8.1)
+            0xB8E00041, // ldaddal w0, w1, [x2]        (ARMv8.1)
+            0xF8208041, // swp x0, x1, [x2]            (ARMv8.1)
+            0xC85F7C41, // ldxr x1, [x2]               (ARMv8.0)
+            0xC8007C41, // stxr w0, x1, [x2]           (ARMv8.0)
+            0xD503201F, // nop
+            0xF9400041, // ldr x1, [x2]
+        )
+        val scanner = CodeScanner().apply { add(code, code.size) }
+        val scan = scanner.result()
+        assertEquals(7L, scan.words)
+        assertEquals(3L, scan.lse)
+        assertEquals(2L, scan.exclusive)
+    }
+
+    @Test
+    fun scanner_entropyTellsPlainCodeFromPackedData() {
+        val uniform = ByteArray(256 * 16) { (it % 256).toByte() }
+        assertEquals(8.0, CodeScanner().apply { add(uniform, uniform.size) }.result().entropy, 0.001)
+        val zeros = ByteArray(1024)
+        assertEquals(0.0, CodeScanner().apply { add(zeros, zeros.size) }.result().entropy, 0.001)
+    }
+
+    @Test
+    fun write_reportsAScanOfExecutableSections() {
+        val dir = File(System.getProperty("java.io.tmpdir"), "exeprobe-${System.nanoTime()}").apply { mkdirs() }
+        try {
+            val exe = File(dir, "game.exe").apply { writeBytes(fakePe()) }
+            val out = File(dir, "exe_probe.txt")
+            ExeProbe.write(exe, emptyList(), out)
+            assertTrue(out.readText().contains("scan .text: words=128 lse=0 exclusive=0"))
         } finally {
             dir.deleteRecursively()
         }
