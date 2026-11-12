@@ -60,6 +60,7 @@ import app.gamenative.utils.AppUpdater
 import app.gamenative.utils.ExeProbe
 import app.gamenative.utils.ExitReport
 import app.gamenative.utils.LogMirror
+import app.gamenative.utils.LogcatDump
 import app.gamenative.utils.StorageUtils
 import app.gamenative.utils.renderReleaseNotes
 import com.winlator.container.Container
@@ -1396,6 +1397,7 @@ private fun mirrorAppLogs(context: Context, gamePath: String) {
     val dest = File(gamePath, "app_logs")
     LogMirror.mirror(listOf(File(base, "wine_logs"), File(base, "crash_logs")), dest)
     runCatching { ExitReport.write(context, dest) }
+    runCatching { LogcatDump.write(File(dest, "logcat.txt")) }
     runCatching {
         ExeProbe.write(File(gamePath, "$FLAVOR_DIR/${WowClientDownloader.EXE_NAME}"), ILLEGAL_INSTRUCTION_RVAS, File(dest, "exe_probe.txt"))
     }
