@@ -57,6 +57,7 @@ import app.gamenative.ui.theme.WowGold
 import app.gamenative.ui.theme.WowMuted
 import app.gamenative.ui.theme.WowSubtle
 import app.gamenative.utils.AppUpdater
+import app.gamenative.utils.ExeProbe
 import app.gamenative.utils.ExitReport
 import app.gamenative.utils.LogMirror
 import app.gamenative.utils.StorageUtils
@@ -1395,7 +1396,15 @@ private fun mirrorAppLogs(context: Context, gamePath: String) {
     val dest = File(gamePath, "app_logs")
     LogMirror.mirror(listOf(File(base, "wine_logs"), File(base, "crash_logs")), dest)
     runCatching { ExitReport.write(context, dest) }
+    runCatching {
+        ExeProbe.write(File(gamePath, "$FLAVOR_DIR/${WowClientDownloader.EXE_NAME}"), ILLEGAL_INSTRUCTION_RVAS, File(dest, "exe_probe.txt"))
+    }
 }
+
+// Where the client raised "illegal instruction" exceptions on a Snapdragon 685 (build 1.60.1.70888), plus its handler.
+private val ILLEGAL_INSTRUCTION_RVAS = listOf(
+    0x12880L, 0x35C3E0L, 0x35388CL, 0x131B4L, 0x130C0L, 0x12DCCL, 0x12B0CL, 0xBE38L, 0xB79CL, 0xAC38L, 0x3569F0L, 0x2C6D8L,
+)
 
 // The portal Config.wtf already points at, else the install's region from .build.info.
 internal fun portalOf(root: File) =
