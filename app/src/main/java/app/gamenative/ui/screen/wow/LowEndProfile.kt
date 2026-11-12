@@ -49,3 +49,6 @@ internal const val LOW_END_SCREEN_SIZE = "854x480"
  */
 internal fun dxwrapperConfig(version: String, lowEnd: Boolean): String =
     if (lowEnd) "version=$version,numCompilerThreads=2,maxDeviceMemory=2048" else "version=$version"
+
+/** Wine debug channels for diagnosing the low-end profile. */
+internal const val LOW_END_WINE_DEBUG_CHANNELS = "warn,err,fixme,loaddll,seh,process"

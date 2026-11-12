@@ -90,6 +90,7 @@ object WoWLauncherState {
 private const val CONTAINER_ID = "wow_forever"
 private const val READY_STATUS = "Ready to launch"
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun WoWForeverScreen(
     onLaunch: (appId: String) -> Unit,
@@ -101,7 +102,11 @@ fun WoWForeverScreen(
     // Diagnostics for the low-end profile: have Wine write wine_debug.log to
     // Android/data/<package>/files/wine_logs/ so boot crashes can be analysed (this fork has no UI toggle for it).
     LaunchedEffect(gpu.lowEnd) {
-        if (gpu.lowEnd) withContext(Dispatchers.IO) { PrefManager.enableWineDebug = true }
+        if (gpu.lowEnd) withContext(Dispatchers.IO) {
+            PrefManager.enableWineDebug = true
+            // seh shows where an exception was raised, process shows which process exited and with what code.
+            PrefManager.wineDebugChannels = LOW_END_WINE_DEBUG_CHANNELS
+        }
     }
 
     var gamePath by remember { mutableStateOf(GamePath.load(context)) }
@@ -178,7 +183,10 @@ fun WoWForeverScreen(
 
     suspend fun fetchVersionStatus() {
         isCheckingVersion = true
-        versionStatus = withContext(Dispatchers.IO) { WowClientDownloader.checkVersion(File(gamePath)) }
+        val checked = region
+        val status = withContext(Dispatchers.IO) { WowClientDownloader.checkVersion(File(gamePath), checked.cdnRegion) }
+        // A check for a region the player has since switched away from is stale.
+        if (checked == region) versionStatus = status
         isCheckingVersion = false
     }
 
@@ -337,7 +345,7 @@ fun WoWForeverScreen(
 
     fun performInstall() {
         showUpgradeDialog = false
-        downloadGameFiles("Install failed", WowClientDownloader::install) {
+        downloadGameFiles("Install failed", { root, onStatus -> WowClientDownloader.install(root, region.cdnRegion, onStatus) }) {
             versionStatus = null
             if (checkFiles()) {
                 checkVersionStatus()
@@ -482,9 +490,12 @@ fun WoWForeverScreen(
                     Text(text = "Target Path: $gamePath", fontSize = 11.sp, color = WowSubtle, maxLines = 2)
 
                     Row {
-                        OptionMenu("Region: ${region.label}", Icons.Default.Public, GameRegion.entries, region, { it.label }, !isLaunching) {
+                        OptionMenu("Region: ${region.label}", Icons.Default.Public, GameRegion.entries, region, { it.label }, !isLaunching && !isUpdating) {
                             GameRegion.save(context, it)
                             region = it
+                            // Regions can be on different builds, so the install may now need an update.
+                            versionStatus = null
+                            checkVersionStatus()
                         }
                         OptionMenu("Resolution: ${resolution.label}", Icons.Default.AspectRatio, RenderResolution.entries, resolution, { it.label }, !isLaunching) {
                             RenderResolution.save(context, it)
@@ -657,9 +668,10 @@ fun WoWForeverScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    // Wraps onto a second line on narrow portrait phones, where a Row squeezed the last button's text
+                    // into one letter per line and hid the login option (#44).
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
                     ) {
                         LinkButton("Refresh Status", Icons.Default.Refresh) {
                             checkFiles()
@@ -904,6 +916,9 @@ private fun prefs(context: Context) = context.getSharedPreferences("wow_forever"
 enum class GameRegion(val label: String) {
     US("Americas"), EU("Europe"), KR("Korea"), TW("Taiwan");
 
+    /** The region's name in Blizzard's patch server tables. */
+    val cdnRegion get() = name.lowercase()
+
     companion object {
         private const val KEY_REGION = "region"
 
@@ -922,7 +937,7 @@ enum class GameRegion(val label: String) {
 
 /** The 16:9 render budget, before it's reshaped to the window's aspect ratio. Defaults to the GPU profile's size. */
 enum class RenderResolution(val size: String, val label: String) {
-    LOW("854x480", "480p"), SD("960x540", "540p"), HD("1280x720", "720p"), FULL_HD("1920x1080", "1080p");
+    LOW("854x480", "480p"), SD("960x540", "540p"), HD("1280x720", "720p"), HD_PLUS("1600x900", "900p"), FULL_HD("1920x1080", "1080p");
 
     companion object {
         private const val KEY_RESOLUTION = "resolution"
@@ -1073,7 +1088,7 @@ private fun LinkButton(text: String, icon: ImageVector, enabled: Boolean = true,
     TextButton(onClick = onClick, enabled = enabled) {
         Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp), tint = WowMuted)
         Spacer(modifier = Modifier.width(6.dp))
-        Text(text, fontSize = 12.sp, color = WowMuted)
+        Text(text, fontSize = 12.sp, color = WowMuted, maxLines = 1)
     }
 }
 
@@ -1216,13 +1231,9 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
     }
 
     val arm64Exe = File(gameRoot, "$FLAVOR_DIR/$EXE_NAME")
-    BattleNetSignIn.load(context)?.let { login ->
-        BattleNetSignIn.writeLoginFile(gameRoot, login)
-        BattleNetSignIn.startLoginWatcher(gameRoot)
-    }
     if (!arm64Exe.exists()) {
         try {
-            WowClientDownloader.download(gameRoot, onStatus)
+            WowClientDownloader.download(gameRoot, GameRegion.current(context, gameRoot.path).cdnRegion, onStatus)
         } catch (e: Exception) {
             if (!arm64Exe.exists()) throw IllegalStateException("Couldn't download $EXE_NAME: ${e.message}", e)
             Timber.w(e, "Client update check failed, launching the existing $EXE_NAME")
@@ -1231,7 +1242,7 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 
     onStatus("Configuring ${gpu.label} container...")
     val containerManager = ContainerManager(context)
-    val config = containerConfig(gameRoot, gpu, screenSize)
+    val config = containerConfig(gameRoot, gpu, screenSize, WowMachineIdentity.load(context))
     val container = containerManager.getContainerById(CONTAINER_ID)
     if (container == null) {
         onStatus("Creating prefix environment (first boot)...")
@@ -1241,12 +1252,17 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
         container.saveData()
     }
     check(containerManager.hasContainer(CONTAINER_ID)) { "Container creation failed. Check system storage and logs." }
+    // Written last, so the password isn't on disk during the client download or container setup.
+    BattleNetSignIn.load(context)?.let { login ->
+        BattleNetSignIn.writeLoginFile(gameRoot, login)
+        BattleNetSignIn.startLoginWatcher(gameRoot)
+    }
     return CONTAINER_ID
 }
 
-private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String): JSONObject {
+private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String, identity: WowMachineIdentity): JSONObject {
     val samsungEnv = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) " FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1" else ""
-    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$samsungEnv"
+    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144 ${WowMachineIdentity.HOSTNAME_ENV}=${identity.computerName}$samsungEnv"
     return JSONObject().apply {
         put("id", CONTAINER_ID)
         put("name", "WoW Forever")
@@ -1387,7 +1403,8 @@ internal fun portalOf(root: File) =
     runCatching { File(root, CONFIG_WTF).takeIf { it.isFile }?.readLines() }.getOrNull()
         ?.firstOrNull { it.startsWith("SET portal ", ignoreCase = true) }
         ?.substringAfter(" ")?.substringAfter(" ")?.trim('"')?.takeIf { it.isNotBlank() }
-        ?: WowClientDownloader.readBuildInfo(File(root, BUILD_INFO))?.get("Branch")?.takeIf { it.isNotBlank() }?.uppercase() ?: "US"
+        ?: WowClientDownloader.readBuildInfo(File(root, BUILD_INFO))?.get("Branch")?.takeIf { it.isNotBlank() }?.uppercase()
+        ?: WowClientDownloader.defaultBranch().uppercase()
 
 private fun installBundledComponents(context: Context, onStatus: (String) -> Unit) {
     installDriver(context, DEFAULT_DRIVER, "turnip-wow-scheduler-test.zip", onStatus)
