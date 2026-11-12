@@ -70,6 +70,7 @@ jobs:
           --tests 'app.gamenative.ui.screen.wow.*'
           --tests 'app.gamenative.utils.LogMirrorTest'
           --tests 'app.gamenative.utils.ExitReportTest'
+          --tests 'com.winlator.core.DXVKHelperTest'
 
       - name: Upload test report
         if: always()
