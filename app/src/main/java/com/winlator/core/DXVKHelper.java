@@ -33,6 +33,11 @@ public class DXVKHelper {
             content += "dxgi.maxSharedMemory = "+maxDeviceMemory+"\n";
         }
 
+        String numCompilerThreads = config.get("numCompilerThreads");
+        if (!numCompilerThreads.isEmpty() && !numCompilerThreads.equals("0")) {
+            content += "dxvk.numCompilerThreads = "+numCompilerThreads+"\n";
+        }
+
         String maxFeatureLevel = config.get("maxFeatureLevel");
         if (!maxFeatureLevel.isEmpty() && !maxFeatureLevel.equals("0")) {
             content += "d3d11.maxFeatureLevel = "+maxFeatureLevel+"\n";

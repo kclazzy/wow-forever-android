@@ -38,3 +38,14 @@ internal fun performanceCoreList(): String? {
     }
     return selectPerformanceCores(freqs)
 }
+
+/** Render size for low-end Adreno 6xx: fewer pixels means less GPU load and less memory for render targets. */
+internal const val LOW_END_SCREEN_SIZE = "854x480"
+
+/**
+ * DXVK settings for the container. On low-end devices DXVK's default of one shader compiler thread per core (8)
+ * starves the game and spikes memory during loading, so it's capped; the reported video memory is capped too so the
+ * client keeps its texture budget small.
+ */
+internal fun dxwrapperConfig(version: String, lowEnd: Boolean): String =
+    if (lowEnd) "version=$version,numCompilerThreads=2,maxDeviceMemory=2048" else "version=$version"

@@ -106,4 +106,22 @@ class LowEndProfileTest {
         assertEquals(listOf("SET farclip \"1200\""), lines(root, "farclip"))
         assertTrue(lines(root, "maxFPS").isEmpty())
     }
+
+    @Test
+    fun dxwrapperConfig_lowEnd_capsCompilerThreadsAndVideoMemory() {
+        val config = dxwrapperConfig("2.4.1-1", lowEnd = true)
+        assertTrue(config.startsWith("version=2.4.1-1"))
+        assertTrue(config.contains("numCompilerThreads=2"))
+        assertTrue(config.contains("maxDeviceMemory=2048"))
+    }
+
+    @Test
+    fun dxwrapperConfig_otherDevices_isUnchanged() {
+        assertEquals("version=2.4.1-1", dxwrapperConfig("2.4.1-1", lowEnd = false))
+    }
+
+    @Test
+    fun lowEndScreenSize_isOneOfTheSelectableResolutions() {
+        assertTrue(RenderResolution.entries.any { it.size == LOW_END_SCREEN_SIZE })
+    }
 }

@@ -922,7 +922,7 @@ enum class GameRegion(val label: String) {
 
 /** The 16:9 render budget, before it's reshaped to the window's aspect ratio. Defaults to the GPU profile's size. */
 enum class RenderResolution(val size: String, val label: String) {
-    SD("960x540", "540p"), HD("1280x720", "720p"), FULL_HD("1920x1080", "1080p");
+    LOW("854x480", "480p"), SD("960x540", "540p"), HD("1280x720", "720p"), FULL_HD("1920x1080", "1080p");
 
     companion object {
         private const val KEY_RESOLUTION = "resolution"
@@ -1152,7 +1152,7 @@ private data class GpuProfile(
             isAdreno8xxDevice(context) ->
                 GpuProfile(ADRENO_8XX_DRIVER, "noconform,sysmem", "1280x720", "Adreno 8xx", "Snapdragon 8 Elite / Adreno 8xx")
             detectsLowEndAdreno(context) ->
-                GpuProfile(lowEndDriver(context), "noconform,sysmem", "960x540", "Adreno 6xx (low-end)", "Snapdragon 6 Series / Adreno 6xx", lowEnd = true)
+                GpuProfile(lowEndDriver(context), "noconform,sysmem", LOW_END_SCREEN_SIZE, "Adreno 6xx (low-end)", "Snapdragon 6 Series / Adreno 6xx", lowEnd = true)
             else ->
                 GpuProfile(DEFAULT_DRIVER, "noconform", "1920x1080", "Adreno 740", "Snapdragon 8 Series / Adreno 740")
         }
@@ -1257,7 +1257,7 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String)
         put("graphicsDriverConfig", "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high")
         put("displayRenderer", "vulkan")
         put("dxwrapper", "dxvk-$DXVK_VERSION-1")
-        put("dxwrapperConfig", "version=$DXVK_VERSION-1")
+        put("dxwrapperConfig", dxwrapperConfig("$DXVK_VERSION-1", gpu.lowEnd))
         put("wineVersion", "$PROTON_VERSION-1")
         put("containerVariant", "bionic")
         put("fexcoreVersion", "2609-0")
