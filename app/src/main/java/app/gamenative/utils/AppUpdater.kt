@@ -14,6 +14,12 @@ import org.json.JSONObject
 import timber.log.Timber
 
 object AppUpdater {
+    /**
+     * Off in this fork: upstream APKs are signed with a different key, so Android refuses to install them over this
+     * build ("conflicts with an existing package"), and they lack the Redmi Note 13 changes.
+     */
+    const val SELF_UPDATE_ENABLED = false
+
     private const val RELEASES_URL = "https://api.github.com/repos/jaredgei/wow-forever-android/releases/latest"
 
     data class Release(
@@ -66,6 +72,7 @@ object AppUpdater {
     }.getOrNull()
 
     suspend fun check(currentVersion: String = BuildConfig.VERSION_NAME): Release? = withContext(Dispatchers.IO) {
+        if (!SELF_UPDATE_ENABLED) return@withContext null
         runCatching {
             val request = Request.Builder()
                 .url(RELEASES_URL)
