@@ -71,6 +71,7 @@ jobs:
           --tests 'app.gamenative.utils.LogMirrorTest'
           --tests 'app.gamenative.utils.ExitReportTest'
           --tests 'com.winlator.core.DXVKHelperTest'
+          --tests 'com.winlator.core.ProcessExitStatusTest'
 
       - name: Upload test report
         if: always()

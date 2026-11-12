@@ -462,12 +462,34 @@ public abstract class ProcessHelper {
     }
 
 
+    /** Explains a status from Process.waitFor(): values above 128 mean the process was killed by signal (status - 128). */
+    public static String describeExitStatus(int status) {
+        if (status <= 128) return "status=" + status + (status == 0 ? " (clean exit)" : " (exited by itself with an error code)");
+        int signal = status - 128;
+        String name;
+        switch (signal) {
+            case 4: name = "SIGILL, illegal instruction"; break;
+            case 6: name = "SIGABRT, abort"; break;
+            case 7: name = "SIGBUS, bus error"; break;
+            case 9: name = "SIGKILL, killed from outside (system memory or process killer)"; break;
+            case 11: name = "SIGSEGV, native crash"; break;
+            case 15: name = "SIGTERM, asked to stop"; break;
+            default: name = "signal " + signal;
+        }
+        return "status=" + status + " (" + name + ")";
+    }
+
     private static void createWaitForThread(java.lang.Process process, final Callback<Integer> terminationCallback) {
         Executors.newSingleThreadExecutor().execute(new Runnable() {
             @Override
             public void run() {
                 try {
                     int status = process.waitFor();
+                    String exitLine = "ProcessHelper: process exited, " + describeExitStatus(status);
+                    Log.d("ProcessHelper", exitLine);
+                    synchronized (debugCallbacks) {
+                        for (Callback<String> callback : debugCallbacks) callback.call(exitLine);
+                    }
                     terminationCallback.call(status);
                 }
                 catch (InterruptedException e) {
